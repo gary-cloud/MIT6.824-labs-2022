@@ -2,8 +2,11 @@ package mr
 
 import "fmt"
 import "log"
+// import "io"
+// import "os"
 import "net/rpc"
 import "hash/fnv"
+// import "encoding/json"
 
 
 //
@@ -36,6 +39,67 @@ func Worker(mapf func(string, string) []KeyValue,
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
+	assignArgs := AssignTaskArgs{}
+	assignReply := AssignTaskReply{}
+	
+	ok := call("Coordinator.AssignTaskHandler", &assignArgs, &assignReply)
+	for  {
+		if ok {
+			if assignReply.Type == "map" {
+				filename := assignReply.Map.FileName
+				taskId := assignReply.Map.TaskId
+				// nReduce := assignReply.NReduce
+
+				fmt.Println("map: ", filename, " + ", taskId)
+
+				// file, err := os.Open(filename)
+				// if err != nil {
+				// 	log.Fatalf("cannot open %v", filename)
+				// }
+				// content, err := io.ReadAll(file)
+				// if err != nil {
+				// 	log.Fatalf("cannot read %v", filename)
+				// }
+				// file.Close()
+				// kva := mapf(filename, string(content))
+
+				// for i != 0; i < nReduce; i++ {
+				// 	// 创建一个临时文件
+				// 	tempFile, err := os.CreateTemp("", "example*.txt")
+				// 	if err != nil {
+				// 		fmt.Println("Error creating temp file:", err)
+				// 		return
+				// 	}
+				// 	// 使用完临时文件后删除它
+				// 	defer os.Remove(tempFile.Name())
+				// }
+				commitArgs := CommitTaskArgs{taskId, "map"}
+				commitReply := CommitTaskReply{}
+
+				call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
+
+			} else if assignReply.Type == "reduce" {
+				taskId := assignReply.Reduce.TaskId
+				// nReduce := assignReply.NReduce
+
+				fmt.Println("reduce: ", taskId)
+
+				commitArgs := CommitTaskArgs{taskId, "reduce"}
+				commitReply := CommitTaskReply{}
+
+				call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
+
+			} else {
+				break
+			}
+
+			assignArgs = AssignTaskArgs{}
+			assignReply = AssignTaskReply{}
+			ok = call("Coordinator.AssignTaskHandler", &assignArgs, &assignReply)
+		} else {
+			fmt.Printf("call failed!\n")
+		}
+	}
 }
 
 //
