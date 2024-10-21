@@ -58,6 +58,8 @@ func (c *Coordinator) AssignTaskHandler(args *AssignTaskArgs, reply *AssignTaskR
 	reply.NReduce = c.nReduce
 	// There are unassigned map tasks.
 	c.mapMu.Lock()
+// Goto here after Lock() to avoid deadlock.
+Map:
 	if !c.mapAllAssigned {
 		for key, value := range c.mapTasks {
 			if (value.assigned) {
@@ -75,6 +77,7 @@ func (c *Coordinator) AssignTaskHandler(args *AssignTaskArgs, reply *AssignTaskR
 			break
 		}
 
+		// Create a gorotinue to monitor the completion of the map task
 		go func(taskId int) {
 			time.Sleep(time.Second * 10)
 			c.mapMu.Lock()
@@ -97,15 +100,17 @@ func (c *Coordinator) AssignTaskHandler(args *AssignTaskArgs, reply *AssignTaskR
 	for !c.mapDone {
 		c.mapDoneCond.Wait()
 		if !c.mapAllAssigned {
-			return c.AssignTaskHandler(args, reply)
+			// If we use recursion like the next line, there will be a deadlock.
+			// return c.AssignTaskHandler(args, reply)
+			goto Map
 		}
 	}
 	c.mapMu.Unlock()
 
-	// 
 	// All map tasks are done, and there are unassigned reduce tasks.
-	// 
 	c.reduceMu.Lock()
+// Goto here after Lock() to avoid deadlock.
+Reduce:
 	if !c.reduceAllAssigned {
 		for key, value := range c.reduceTasks {
 			if (value.assigned) {
@@ -122,6 +127,7 @@ func (c *Coordinator) AssignTaskHandler(args *AssignTaskArgs, reply *AssignTaskR
 			break
 		}
 
+		// Create a gorotinue to monitor the completion of the reduce task.
 		go func(taskId int) {
 			time.Sleep(time.Second * 10)
 			c.reduceMu.Lock()
@@ -144,7 +150,9 @@ func (c *Coordinator) AssignTaskHandler(args *AssignTaskArgs, reply *AssignTaskR
 	for !c.reduceDone {
 		c.reduceDoneCond.Wait()
 		if !c.reduceAllAssigned {
-			return c.AssignTaskHandler(args, reply)
+			// If we use recursion like the next line, there will be a deadlock.
+			// return c.AssignTaskHandler(args, reply)
+			goto Reduce
 		}
 	}
 	c.reduceMu.Unlock()
