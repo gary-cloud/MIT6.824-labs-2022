@@ -498,7 +498,8 @@ func (rf *Raft) startElection() {
 				}
 
 				vote_mu.Lock()
-				// Get enough votes.
+				// If the candidate gets enough votes, 
+				// then converts to leader immediately!!!
 				if 2 * vote >= peers_num {
 					vote_mu.Unlock()
 					// Successfully elected as the leader.
