@@ -463,7 +463,8 @@ func (rf *Raft) startElection() {
 			args := &RequestVoteArgs{currentTerm, me, lastLogIndex, lastLogTerm}
 			reply := &RequestVoteReply{}
 			
-			// Call() in sendRequestVote is guaranteed to return.
+			// Check if the server is still the candidate. 
+			// The candidate may notice there is a term bigger than its own through RPC, and changes to follower.
 			rf.mu.Lock()
 			if (rf.role != "candidate") {
 				rf.mu.Unlock()
@@ -471,8 +472,12 @@ func (rf *Raft) startElection() {
 			}
 			rf.mu.Unlock()
 
+			// If we send RequestVote RPC with rf.mu lock, there will be a deadlock.
+			// Call() in sendRequestVote is guaranteed to return, but may not return soon.
 			ok := rf.sendRequestVote(server, args, reply)
 
+			// Check if the server is still the candidate. 
+			// The candidate may notice there is a term bigger than its own through RPC, and changes to follower.
 			rf.mu.Lock()
 			if (rf.role != "candidate") {
 				rf.mu.Unlock()
@@ -554,6 +559,8 @@ func (rf *Raft) leader() {
 				args := &AppendEntriesArgs{currentTerm, me, nil}
 				reply := &AppendEntriesReply{}
 
+				// Check if the server is still the leader. 
+				// The leader may notice there is a term bigger than its own through RPC, and changes to follower.
 				rf.mu.Lock()
 				if (rf.role != "leader") {
 					rf.mu.Unlock()
@@ -562,8 +569,13 @@ func (rf *Raft) leader() {
 				rf.mu.Unlock()
 
 				// Send heartbeat
+				// If we send AppendEntries RPC with rf.mu lock, there will be a deadlock.
+				// Call() in sendAppendEntries is guaranteed to return, but may not return soon.
+				// So the server becomes leader once it gets enough votes.
 				rf.sendAppendEntries(server, args, reply)
 
+				// Check if the server is still the leader. 
+				// The leader may notice there is a term bigger than its own through RPC, and changes to follower.
 				rf.mu.Lock()
 				if (rf.role != "leader") {
 					rf.mu.Unlock()
@@ -587,7 +599,6 @@ func (rf *Raft) leader() {
 
 	// leader convert to follower
 	rf.role = "follower"
-	// rf.mu.Unlock()
 }
 
 //
