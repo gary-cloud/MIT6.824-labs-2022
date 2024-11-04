@@ -19,8 +19,6 @@ package raft
 
 import (
 	//	"bytes"
-	
-    "fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -414,28 +412,25 @@ func (rf *Raft) ticker() {
 			// Exit startElection() with Lock.
 
 			rf.mu.Unlock()
-			// Sleep for a random time. (100 ms - 500 ms)
-			time.Sleep(time.Duration(rand.Intn(400) + 100) * time.Millisecond)
+			// Sleep for a random time. (100 ms - 300 ms)
+			time.Sleep(time.Duration(rand.Intn(200) + 100) * time.Millisecond)
 			rf.mu.Lock()
 		}
 
 		rf.mu.Unlock()
-		// Sleep for a random time. (100 ms - 500 ms)
-		time.Sleep(time.Duration(rand.Intn(400) + 100) * time.Millisecond)
+		// Sleep for a random time. (100 ms - 300 ms)
+		time.Sleep(time.Duration(rand.Intn(200) + 100) * time.Millisecond)
 	}
 }
 
 // Start an eleciton.
 func (rf *Raft) startElection() {
 	// Enter startElection() with Lock.
-	// rf.mu.Lock()
 	
 	// Increment current term.
 	rf.currentTerm++
 
 	currentTerm := rf.currentTerm
-	maxTerm := currentTerm
-	var maxTerm_mu sync.Mutex
 	me := rf.me
 	peers_num := len(rf.peers)
 	lastLogIndex := len(rf.log) - 1
@@ -444,15 +439,14 @@ func (rf *Raft) startElection() {
 	// Vote for itself.
 	rf.votedFor = me
 
-	// rf.mu.Unlock()
-
 	// The number of votes received
-	vote := 0
+	vote := 1
 	var vote_mu sync.Mutex
 
 	// Wait Group
 	var wg sync.WaitGroup
 
+	rf.mu.Unlock()
 	// Send RequestVote RPCs in parallel.
 	for i := 0; i < peers_num; i++ {
 		// Already vote for itself.
@@ -470,61 +464,70 @@ func (rf *Raft) startElection() {
 			reply := &RequestVoteReply{}
 			
 			// Call() in sendRequestVote is guaranteed to return.
-			// TODO: Deadlock here!!!
+			rf.mu.Lock()
+			if (rf.role != "candidate") {
+				rf.mu.Unlock()
+				return
+			}
+			rf.mu.Unlock()
+
 			ok := rf.sendRequestVote(server, args, reply)
 
-			if (ok) {
-				fmt.Printf("%d ---RequestVote OK---> %d, %d.term=%d, %d.term=%d, VoteGranted=%t\n", me, server, me, currentTerm, server, reply.Term, reply.VoteGranted)
-
-				maxTerm_mu.Lock()
-				if reply.Term > maxTerm {
-					maxTerm = reply.Term 
-				}
-				maxTerm_mu.Unlock()
-
-				if reply.VoteGranted {
-					vote_mu.Lock()
-					vote++
-					vote_mu.Unlock()
-				} 
-			} else {
-				fmt.Printf("%d ---RequestVote Failed---> %d, %d.term=%d, %d.term=%d\n", me, server, me, currentTerm, server, reply.Term)
+			rf.mu.Lock()
+			if (rf.role != "candidate") {
+				rf.mu.Unlock()
+				return
 			}
+
+			if (ok) {
+				vote_mu.Lock()
+				// fmt.Printf("%d ---RequestVote OK---> %d, %d.term=%d, %d.term=%d, VoteGranted=%t, current vote=%d\n", me, server, me, currentTerm, server, reply.Term, reply.VoteGranted, vote)
+				if reply.VoteGranted {
+					vote++
+				} 
+				vote_mu.Unlock()
+
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term 
+					rf.role = "follower"
+				}
+
+				if rf.role != "candidate" {
+					rf.mu.Unlock()
+					return
+				}
+
+				vote_mu.Lock()
+				// Get enough votes.
+				if 2 * vote >= peers_num {
+					vote_mu.Unlock()
+					// Successfully elected as the leader.
+					rf.role = "leader"
+					// Enter leader() with lock.
+					rf.leader()
+					// Exit leader() with lock.
+					rf.mu.Unlock()
+					return
+				}
+
+				vote_mu.Unlock()
+			} else {
+				// fmt.Printf("%d ---RequestVote Failed---> %d, %d.term=%d, %d.term=%d\n", me, server, me, currentTerm, server, reply.Term)
+			}
+			rf.mu.Unlock()
 		}(i)
 	}
 
 	// Wait all rpc return
 	wg.Wait()
 
-	// Fail to be elected as leader.
-
-	// If a candidate discovers that its term number has expired, 
-	// it immediately reverts to follower.
-	if maxTerm > currentTerm {
-		// rf.mu.Lock()
-		rf.currentTerm = maxTerm
-		rf.role = "follower"
-		// rf.mu.Unlock()
-		return
-	}
-
-	// Can't get enough votes.
-	if vote < peers_num / 2 {
-		// Still be a candidate.
-		return
-	}
-
-	// rf.mu.Lock()
-	rf.role = "leader"
-	rf.mu.Unlock()
-
-	// Successfully elected as leader.
-	// go rf.leader()
-	rf.leader()
+	// Exit startElection() with Lock.
+	rf.mu.Lock()
 }
 
 func (rf *Raft) leader() {
-	rf.mu.Lock()
+	// Enter leader() with lock.
+
 	currentTerm := rf.currentTerm
 	me := rf.me
 	peers_num := len(rf.peers)
@@ -536,30 +539,44 @@ func (rf *Raft) leader() {
 	for !rf.killed() && rf.role == "leader" {
 		rf.mu.Unlock()
 
-		// // Reset timeout itself.
-		// rf.lastHeartbeat = time.Now()
+		// Reset timeout itself.
+		rf.lastHeartbeat = time.Now()
 
-		fmt.Printf("%d ---AppendEntries---> ALL, %d.term=%d\n", me, me, currentTerm)
+		// fmt.Printf("%d ---AppendEntries---> ALL, %d.term=%d\n", me, me, currentTerm)
 		for i := 0; i < peers_num; i++ {
-			// if i == me {
-			// 	continue
-			// }
+			if i == me {
+				continue
+			}
 
 			// Each goroutine sends one RPC.
 			go func(server int) {
 				args := &AppendEntriesArgs{currentTerm, me, nil}
 				reply := &AppendEntriesReply{}
 
+				rf.mu.Lock()
+				if (rf.role != "leader") {
+					rf.mu.Unlock()
+					return
+				}
+				rf.mu.Unlock()
+
 				// Send heartbeat
 				rf.sendAppendEntries(server, args, reply)
+
+				rf.mu.Lock()
+				if (rf.role != "leader") {
+					rf.mu.Unlock()
+					return
+				}
 
 				// If a leader discovers that its term number has expired, 
 				// it immediately reverts to follower.
 				if reply.Term > currentTerm {
-					rf.mu.Lock()
+					rf.currentTerm = reply.Term
 					rf.role = "follower"
-					rf.mu.Unlock()
 				}
+
+				rf.mu.Unlock()
 			}(i)
 		}
 
