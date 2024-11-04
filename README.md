@@ -1,7 +1,7 @@
 # MIT 6.824 Labs - Gary
-## Lab 1: MapReduce
+## Lab 1: MapReduce ✔
 ## Lab 2: Raft
-### Part A: leader election
+### Part A: leader election ✔
 ### Part B: log
 ### Part C: persistence
 ### Part D: log compaction
