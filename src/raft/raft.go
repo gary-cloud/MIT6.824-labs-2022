@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	// "fmt"
 	//	"6.824/labgob"
 	"6.824/labrpc"
@@ -269,7 +270,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm.
-	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+	if args.PrevLogIndex >= len(rf.log) || 
+	   args.PrevLogTerm != rf.log[args.PrevLogIndex].Term { // TODO
 		reply.Success = false
 		return
 	} 
@@ -509,7 +511,12 @@ func (rf *Raft) reachAgreement() {
 
 				// fmt.Printf("%d ---sendAppendEntries OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d\n", me, server, me, currentTerm, server, reply.Term, reply.Success, len(rf.log))
 
-				if ok && reply.Success {
+				if !ok {
+					rf.mu.Unlock()
+					return
+				}
+				
+				if reply.Success {
 					appendSuccess_mu.Lock()
 					appendSuccess++
 					appendSuccess_mu.Unlock()
@@ -534,7 +541,7 @@ func (rf *Raft) reachAgreement() {
 				// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
 				rf.nextIndex[server]--
 
-				if rf.nextIndex[server] == 0 {
+				if rf.nextIndex[server] == 0 { // TODO
 					panic("nextIndex can't be zero")
 				}
 				rf.mu.Unlock()
