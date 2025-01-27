@@ -257,13 +257,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.IsHeartbeat {
 		reply.Success = true
 
-		// Use heartbeat to update commitIndex.
 		lastLogIndex := len(rf.log) - 1
-		if args.LeaderCommit > rf.commitIndex {
+		lastLogTerm := rf.log[lastLogIndex].Term
+
+		// Use heartbeat to update commitIndex.
+		if args.LeaderCommit > rf.commitIndex && lastLogTerm == args.Term {
 			if lastLogIndex > args.LeaderCommit {
 				rf.commitIndex = args.LeaderCommit
+				// fmt.Printf("heatbeat to modify commitIndex\n")
 			} else {
 				rf.commitIndex = lastLogIndex
+				// fmt.Printf("heatbeat to modify commitIndex\n")
 			}
 		}
 		return
@@ -292,6 +296,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = lastLogIndex
 		}
 	}
+
+	// fmt.Printf("receive AppendEntries\n")
 
 	reply.Success = true
 }
@@ -457,14 +463,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, LogEntry{command, rf.currentTerm})
 
 	// Try to reach a consensus
-	go rf.reachAgreement()
+	go rf.reachAgreement(index)
 
 	return index, term, isLeader
 }
 
 // The leader receives a command from client, 
 // and tries to reach a consensus among the other servers after it's own job.
-func (rf *Raft) reachAgreement() {
+func (rf *Raft) reachAgreement(index int) {
 	rf.mu.Lock()
 
 	// The number of votes received
@@ -516,17 +522,6 @@ func (rf *Raft) reachAgreement() {
 					return
 				}
 				
-				if reply.Success {
-					appendSuccess_mu.Lock()
-					appendSuccess++
-					appendSuccess_mu.Unlock()
-
-					rf.nextIndex[server] = len(rf.log)
-					rf.matchIndex[server] = len(rf.log) - 1
-					rf.mu.Unlock()
-					break;
-				}
-
 				// If RPC response contains term T > currentTerm: set currentTerm = T, convert to follower.
 				if reply.Term > rf.currentTerm {
 					rf.currentTerm = reply.Term 
@@ -536,6 +531,17 @@ func (rf *Raft) reachAgreement() {
 				if rf.role != "leader" {
 					rf.mu.Unlock()
 					return
+				}
+
+				if reply.Success {
+					appendSuccess_mu.Lock()
+					appendSuccess++
+					appendSuccess_mu.Unlock()
+
+					rf.nextIndex[server] = index + 1
+					rf.matchIndex[server] = index
+					rf.mu.Unlock()
+					break;
 				}
 
 				// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
@@ -551,14 +557,15 @@ func (rf *Raft) reachAgreement() {
 			// If the AppendEntries RPC gets enough append success, 
 			// inform the clients immediately and increase commitIndex.
 			if 2 * appendSuccess >= peers_num {
-				appendSuccess_mu.Unlock()
-
 				rf.mu.Lock()
 
-				if len(rf.log) - 1 > rf.commitIndex {
-					rf.commitIndex = len(rf.log) - 1
+				if index > rf.commitIndex {
+					// fmt.Printf("receive enough append success\n")
+					// fmt.Printf("%d - commitIndex=%d, index=%d\n", rf.me, rf.commitIndex, index)
+					rf.commitIndex = index
 				}
 
+				appendSuccess_mu.Unlock()
 				rf.mu.Unlock()
 				return
 			}
@@ -577,6 +584,7 @@ func (rf *Raft) applyToStateMachine() {
 
 			// fmt.Printf("%d - ApplyMsg command=%v applyIndex=%d\n", rf.me, rf.log[rf.lastApplied].Command, rf.lastApplied)
 			applyMsg := ApplyMsg{true, rf.log[rf.lastApplied].Command, rf.lastApplied, false, nil, -1, -1}
+			// fmt.Printf("applyMsg   cmd: %v, index: %v, term: %v\n", rf.log[rf.lastApplied].Command, rf.lastApplied, rf.log[rf.lastApplied].Term)
 			rf.applyCh <- applyMsg
 		}
 		rf.mu.Unlock()
