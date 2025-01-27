@@ -2,7 +2,7 @@
 ## Lab 1: MapReduce ✔
 ## Lab 2: Raft
 ### Part A: leader election ✔
-### Part B: log
+### Part B: log ✔
 ### Part C: persistence
 ### Part D: log compaction
 ## Lab 3: Fault-tolerant Key/Value Service

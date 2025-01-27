@@ -478,18 +478,6 @@ func TestRejoin2B(t *testing.T) {
 
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
-	fmt.Printf("leader1: %v\n", leader1)
-	
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < servers; i++ {
-		fmt.Printf("log - [%v]: ", i)
-		for j := 0; j < len(cfg.rafts[i].log); j++ {
-			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
-		}
-		fmt.Printf("\n")
-	}
-	fmt.Printf("**********************\n")
-
 	cfg.disconnect(leader1)
 
 	// make old leader try to agree on some entries
@@ -497,73 +485,22 @@ func TestRejoin2B(t *testing.T) {
 	cfg.rafts[leader1].Start(103)
 	cfg.rafts[leader1].Start(104)
 
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < servers; i++ {
-		fmt.Printf("log - [%v]: ", i)
-		for j := 0; j < len(cfg.rafts[i].log); j++ {
-			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
-		}
-		fmt.Printf("\n")
-	}
-	fmt.Printf("**********************\n")
-
 	// new leader commits, also for index=2
 	cfg.one(103, 2, true)
 
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < servers; i++ {
-		fmt.Printf("log - [%v]: ", i)
-		for j := 0; j < len(cfg.rafts[i].log); j++ {
-			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
-		}
-		fmt.Printf("\n")
-	}
-	fmt.Printf("**********************\n")
-
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
-	fmt.Printf("leader2: %v\n", leader2)
 	cfg.disconnect(leader2)
 
 	// old leader connected again
-	fmt.Printf("befor reconnect leader1\n")
 	cfg.connect(leader1)
-	fmt.Printf("after reconnect leader1\n")
-
-	time.Sleep(500 * time.Millisecond)
-	leader3 := cfg.checkOneLeader()
-	fmt.Printf("leader3: %v\n", leader3)
 
 	cfg.one(104, 2, true)
-
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < servers; i++ {
-		fmt.Printf("log - [%v]: ", i)
-		for j := 0; j < len(cfg.rafts[i].log); j++ {
-			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
-		}
-		fmt.Printf("\n")
-	}
-	fmt.Printf("**********************\n")
 
 	// all together now
 	cfg.connect(leader2)
 
-	fmt.Printf("**********************\n")
-
 	cfg.one(105, servers, true)
-
-	fmt.Printf("**********************\n")
-
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < servers; i++ {
-		fmt.Printf("log - [%v]: ", i)
-		for j := 0; j < len(cfg.rafts[i].log); j++ {
-			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
-		}
-		fmt.Printf("\n")
-	}
-	fmt.Printf("**********************\n")
 
 	cfg.end()
 }

@@ -261,19 +261,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		lastLogTerm := rf.log[lastLogIndex].Term
 
 		// Use heartbeat to update commitIndex.
+		// It's nessary to check lastLogTerm == args when modify commitIndex,
+		// becuse the follower whose log is wrong may commit/apply the wrong log entry.
 		if args.LeaderCommit > rf.commitIndex && lastLogTerm == args.Term {
 			if lastLogIndex > args.LeaderCommit {
 				rf.commitIndex = args.LeaderCommit
-				// fmt.Printf("heatbeat to modify commitIndex\n")
 			} else {
 				rf.commitIndex = lastLogIndex
-				// fmt.Printf("heatbeat to modify commitIndex\n")
 			}
 		}
 		return
 	}
 
 	// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm.
+	// It's nessary to check args.PrevLogIndex < len(rf.log) to avoid array out of range.
 	if args.PrevLogIndex >= len(rf.log) || 
 	   args.PrevLogTerm != rf.log[args.PrevLogIndex].Term { // TODO
 		reply.Success = false
@@ -296,8 +297,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = lastLogIndex
 		}
 	}
-
-	// fmt.Printf("receive AppendEntries\n")
 
 	reply.Success = true
 }
@@ -515,8 +514,6 @@ func (rf *Raft) reachAgreement(index int) {
 
 				rf.mu.Lock()
 
-				// fmt.Printf("%d ---sendAppendEntries OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d\n", me, server, me, currentTerm, server, reply.Term, reply.Success, len(rf.log))
-
 				if !ok {
 					rf.mu.Unlock()
 					return
@@ -560,8 +557,6 @@ func (rf *Raft) reachAgreement(index int) {
 				rf.mu.Lock()
 
 				if index > rf.commitIndex {
-					// fmt.Printf("receive enough append success\n")
-					// fmt.Printf("%d - commitIndex=%d, index=%d\n", rf.me, rf.commitIndex, index)
 					rf.commitIndex = index
 				}
 
@@ -582,9 +577,8 @@ func (rf *Raft) applyToStateMachine() {
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied++
 
-			// fmt.Printf("%d - ApplyMsg command=%v applyIndex=%d\n", rf.me, rf.log[rf.lastApplied].Command, rf.lastApplied)
 			applyMsg := ApplyMsg{true, rf.log[rf.lastApplied].Command, rf.lastApplied, false, nil, -1, -1}
-			// fmt.Printf("applyMsg   cmd: %v, index: %v, term: %v\n", rf.log[rf.lastApplied].Command, rf.lastApplied, rf.log[rf.lastApplied].Term)
+			
 			rf.applyCh <- applyMsg
 		}
 		rf.mu.Unlock()
