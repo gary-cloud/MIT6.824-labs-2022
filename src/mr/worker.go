@@ -53,173 +53,174 @@ func Worker(mapf func(string, string) []KeyValue,
 	
 	ok := call("Coordinator.AssignTaskHandler", &assignArgs, &assignReply)
 	for  {
-		if ok {
-			if assignReply.Type == "map" {
-				filename := assignReply.Map.FileName
-				taskId := assignReply.Map.TaskId
-				nReduce := assignReply.NReduce
+		if !ok {
+			fmt.Printf("call failed!\n")
+			continue
+		}
 
-				fmt.Println("map: ", filename, " - ", taskId)
+		if assignReply.Type == "map" {
+			filename := assignReply.Map.FileName
+			taskId := assignReply.Map.TaskId
+			nReduce := assignReply.NReduce
 
-				file, err := os.Open(filename)
+			fmt.Println("map: ", filename, " - ", taskId)
+
+			file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open %v", filename)
+			}
+			content, err := io.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", filename)
+			}
+			file.Close()
+			kva := mapf(filename, string(content))
+
+
+			// Create temp file and json encoder slice.
+			fileSlice := make([]*os.File, nReduce)
+			jsonEncoderSlice := make([]*json.Encoder, nReduce)
+
+			for i := 0; i < nReduce; i++ {
+				// Create a temp file.
+				tempFile, err := os.CreateTemp("", "example-*.txt")
 				if err != nil {
-					log.Fatalf("cannot open %v", filename)
-				}
-				content, err := io.ReadAll(file)
-				if err != nil {
-					log.Fatalf("cannot read %v", filename)
-				}
-				file.Close()
-				kva := mapf(filename, string(content))
-
-
-				// Create temp file and json encoder slice.
-				fileSlice := make([]*os.File, nReduce)
-				jsonEncoderSlice := make([]*json.Encoder, nReduce)
-
-				for i := 0; i < nReduce; i++ {
-					// Create a temp file.
-					tempFile, err := os.CreateTemp("", "example-*.txt")
-					if err != nil {
-						fmt.Println("Error creating temp file:", err)
-						return
-					}
-					fileSlice[i] = tempFile
-					jsonEncoderSlice[i] = json.NewEncoder(tempFile)
-					// Delete the tempfile at the end of function.
-					defer tempFile.Close()
-					defer os.Remove(tempFile.Name())
-				}
-
-				// Record k-v in json format.
-				for _, kv := range kva {
-					err := jsonEncoderSlice[ihash(kv.Key) % nReduce].Encode(&kv)
-					if err != nil {
-						fmt.Println("Error encoding k-v to json:", err)
-						return
-					}
-				}
-
-				// Rename temp files.
-				for i := 0; i < nReduce; i++{
-					newName := "mr-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(i)
-					err = os.Rename(fileSlice[i].Name(), newName)
-					if err != nil {
-						fmt.Println("Error renaming file:", err)
-						return
-					}
-				}
-				
-				// Inform coordinator that the map task had been completed.
-				commitArgs := CommitTaskArgs{taskId, "map"}
-				commitReply := CommitTaskReply{}
-				call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
-
-			} else if assignReply.Type == "reduce" {
-				taskId := assignReply.Reduce.TaskId
-
-				fmt.Println("reduce: ", taskId)
-
-				// Open intermediate file and json decode slice.
-				var fileSlice []*os.File
-
-				// Get the current directory
-				currentDir, err := os.Getwd()
-				if err != nil {
-					fmt.Println("Error getting current directory:", err)
+					fmt.Println("Error creating temp file:", err)
 					return
 				}
-
-				// Use regular expressions to match filenames
-				// mr-X-0 regex
-				pattern := `mr-\d+-` + strconv.Itoa(taskId)
-				re := regexp.MustCompile(pattern)
-
-				// The Walk() traverses the current directory
-				err = filepath.Walk(currentDir, func(path string, info os.FileInfo, err error) error {
-					if err != nil {
-						return err
-					}
-
-					// Check if the filenames match
-					if info.Mode().IsRegular() && re.MatchString(info.Name()) {
-						// Open the file and add it to fileSlice
-						file, err := os.Open(path)
-						if err != nil {
-							fmt.Println("Error opening file:", err)
-							// Continue to the next file
-							return nil
-						}
-						fileSlice = append(fileSlice, file)
-					}
-					return nil
-				})
-
-				if err != nil {
-					fmt.Println("Error walking the directory:", err)
-					return
-				}
-
-				// Accumulate the intermediate Map output.
-				intermediate := []KeyValue{}
-
-				for _, file := range fileSlice {
-					dec := json.NewDecoder(file)
-					for {
-						var kv KeyValue
-						if err := dec.Decode(&kv); err != nil {
-						  break
-						}
-						intermediate = append(intermediate, kv)
-					}
-					// Close the file with defer, 
-					// making sure to close when the function returns.
-					defer file.Close()
-				}
-
-				sort.Sort(ByKey(intermediate))
-
-				oname := "mr-out-" + strconv.Itoa(taskId)
-				ofile, _ := os.Create(oname)
-				defer ofile.Close()
-
-				//
-				// call Reduce on each distinct key in intermediate[],
-				// and print the result to mr-out-taskId.
-				//
-				i := 0
-				for i < len(intermediate) {
-					j := i + 1
-					for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-						j++
-					}
-					values := []string{}
-					for k := i; k < j; k++ {
-						values = append(values, intermediate[k].Value)
-					}
-					output := reducef(intermediate[i].Key, values)
-
-					// this is the correct format for each line of Reduce output.
-					fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
-					i = j
-				}
-
-				// Inform coordinator that the reduce task had been completed.
-				commitArgs := CommitTaskArgs{taskId, "reduce"}
-				commitReply := CommitTaskReply{}
-				call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
-
-			} else {
-				break
+				fileSlice[i] = tempFile
+				jsonEncoderSlice[i] = json.NewEncoder(tempFile)
+				// Delete the tempfile at the end of function.
+				defer tempFile.Close()
+				defer os.Remove(tempFile.Name())
 			}
 
-			assignArgs = AssignTaskArgs{}
-			assignReply = AssignTaskReply{}
-			ok = call("Coordinator.AssignTaskHandler", &assignArgs, &assignReply)
+			// Record k-v in json format.
+			for _, kv := range kva {
+				err := jsonEncoderSlice[ihash(kv.Key) % nReduce].Encode(&kv)
+				if err != nil {
+					fmt.Println("Error encoding k-v to json:", err)
+					return
+				}
+			}
+
+			// Rename temp files.
+			for i := 0; i < nReduce; i++{
+				newName := "mr-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(i)
+				err = os.Rename(fileSlice[i].Name(), newName)
+				if err != nil {
+					fmt.Println("Error renaming file:", err)
+					return
+				}
+			}
+			
+			// Inform coordinator that the map task had been completed.
+			commitArgs := CommitTaskArgs{taskId, "map"}
+			commitReply := CommitTaskReply{}
+			call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
+
+		} else if assignReply.Type == "reduce" {
+			taskId := assignReply.Reduce.TaskId
+
+			fmt.Println("reduce: ", taskId)
+
+			// Open intermediate file and json decode slice.
+			var fileSlice []*os.File
+
+			// Get the current directory
+			currentDir, err := os.Getwd()
+			if err != nil {
+				fmt.Println("Error getting current directory:", err)
+				return
+			}
+
+			// Use regular expressions to match filenames
+			// mr-X-0 regex
+			pattern := `mr-\d+-` + strconv.Itoa(taskId)
+			re := regexp.MustCompile(pattern)
+
+			// The Walk() traverses the current directory
+			err = filepath.Walk(currentDir, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				// Check if the filenames match
+				if info.Mode().IsRegular() && re.MatchString(info.Name()) {
+					// Open the file and add it to fileSlice
+					file, err := os.Open(path)
+					if err != nil {
+						fmt.Println("Error opening file:", err)
+						// Continue to the next file
+						return nil
+					}
+					fileSlice = append(fileSlice, file)
+				}
+				return nil
+			})
+
+			if err != nil {
+				fmt.Println("Error walking the directory:", err)
+				return
+			}
+
+			// Accumulate the intermediate Map output.
+			intermediate := []KeyValue{}
+
+			for _, file := range fileSlice {
+				dec := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					intermediate = append(intermediate, kv)
+				}
+				// Close the file with defer, 
+				// making sure to close when the function returns.
+				defer file.Close()
+			}
+
+			sort.Sort(ByKey(intermediate))
+
+			oname := "mr-out-" + strconv.Itoa(taskId)
+			ofile, _ := os.Create(oname)
+			defer ofile.Close()
+
+			//
+			// call Reduce on each distinct key in intermediate[],
+			// and print the result to mr-out-taskId.
+			//
+			i := 0
+			for i < len(intermediate) {
+				j := i + 1
+				for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, intermediate[k].Value)
+				}
+				output := reducef(intermediate[i].Key, values)
+
+				// this is the correct format for each line of Reduce output.
+				fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+				i = j
+			}
+
+			// Inform coordinator that the reduce task had been completed.
+			commitArgs := CommitTaskArgs{taskId, "reduce"}
+			commitReply := CommitTaskReply{}
+			call("Coordinator.CommitTaskHandler", &commitArgs, &commitReply)
+
 		} else {
-			fmt.Printf("call failed!\n")
+			break
 		}
+
+		assignArgs = AssignTaskArgs{}
+		assignReply = AssignTaskReply{}
+		ok = call("Coordinator.AssignTaskHandler", &assignArgs, &assignReply)
 	}
 }
 
