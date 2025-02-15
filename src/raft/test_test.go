@@ -58,23 +58,23 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
-	// fmt.Printf("here is 61!\n")
+	fmt.Printf("here is 61!\n")
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
-	// fmt.Printf("here is 66!\n")
+	fmt.Printf("here is 66!\n")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
-	// fmt.Printf("here is 73!\n")
+	fmt.Printf("here is 73!\n")
 
 	// if there's no quorum, no new leader should
 	// be elected.
-	// fmt.Printf("leader2: %d, (leader2 + 1): %d\n", leader2, (leader2 + 1) % servers)
+	fmt.Printf("leader2: %d, (leader2 + 1): %d\n", leader2, (leader2 + 1) % servers)
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
@@ -82,17 +82,17 @@ func TestReElection2A(t *testing.T) {
 	// check that the one connected server
 	// does not think it is the leader.
 	cfg.checkNoLeader()
-	// fmt.Printf("here is 85!\n")
+	fmt.Printf("here is 85!\n")
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
-	// fmt.Printf("here is 90!\n")
+	fmt.Printf("here is 90!\n")
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
-	// fmt.Printf("here is 95!\n")
+	fmt.Printf("here is 95!\n")
 
 	cfg.end()
 }
@@ -708,17 +708,75 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(12, servers, true)
 
 	leader1 := cfg.checkOneLeader()
+	// fmt.Printf("leader1: %v\n", leader1)
+	
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
 	cfg.disconnect(leader1)
 	cfg.start1(leader1, cfg.applier)
 	cfg.connect(leader1)
 
+	// fmt.Printf("leader1: %v\n", leader1)
+	
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
+
 	cfg.one(13, servers, true)
 
 	leader2 := cfg.checkOneLeader()
+
+	// fmt.Printf("leader2: %v\n", leader2)
+	
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
+
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1, true)
+	// leader3 := cfg.checkOneLeader()
+
+	// fmt.Printf("leader3: %v\n", leader3)
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
 	cfg.start1(leader2, cfg.applier)
 	cfg.connect(leader2)
+
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
 
 	cfg.wait(4, servers, -1) // wait for leader2 to join before killing i3
 
@@ -727,6 +785,16 @@ func TestPersist12C(t *testing.T) {
 	cfg.one(15, servers-1, true)
 	cfg.start1(i3, cfg.applier)
 	cfg.connect(i3)
+
+	// time.Sleep(500 * time.Millisecond)
+	// for i := 0; i < servers; i++ {
+	// 	fmt.Printf("log - [%v]: ", i)
+	// 	for j := 0; j < len(cfg.rafts[i].log); j++ {
+	// 		fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+	// 	}
+	// 	fmt.Printf("\n")
+	// }
+	// fmt.Printf("**********************\n")
 
 	cfg.one(16, servers, true)
 
@@ -915,14 +983,26 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
-		if iters == 200 {
+		time.Sleep(500 * time.Millisecond)
+		fmt.Printf("----------------------\n")
+		for i := 0; i < servers; i++ {
+			fmt.Printf("log - [%v]: ", i)
+			for j := 0; j < len(cfg.rafts[i].log); j++ {
+				fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+			}
+			fmt.Printf("\n")
+		}
+		fmt.Printf("**********************\n")
+		if iters == 2 {
 			cfg.setlongreordering(true)
 		}
 		leader := -1
 		for i := 0; i < servers; i++ {
-			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
+			cmd := rand.Int() % 10000
+			_, _, ok := cfg.rafts[i].Start(cmd)
 			if ok && cfg.connected[i] {
 				leader = i
+				fmt.Printf("leader: %d, cmd: %d\n", leader, cmd)
 			}
 		}
 
@@ -954,7 +1034,20 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
-	cfg.one(rand.Int()%10000, servers, true)
+	time.Sleep(500 * time.Millisecond)
+	fmt.Printf("----------------------\n")
+	for i := 0; i < servers; i++ {
+		fmt.Printf("log - [%v]: ", i)
+		for j := 0; j < len(cfg.rafts[i].log); j++ {
+			fmt.Printf("%v-%v ", cfg.rafts[i].log[j].Command, cfg.rafts[i].log[j].Term)
+		}
+		fmt.Printf("\n")
+	}
+	cmd := rand.Int()%10000
+	fmt.Printf("leader: %d, cmd: %d\n", cfg.checkOneLeader(), cmd)
+	fmt.Printf("**********************\n")
+
+	cfg.one(cmd, servers, true)
 
 	cfg.end()
 }
