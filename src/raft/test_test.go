@@ -993,7 +993,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			fmt.Printf("\n")
 		}
 		fmt.Printf("**********************\n")
-		if iters == 2 {
+		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
 		leader := -1

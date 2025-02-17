@@ -65,7 +65,7 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	applyCh   chan ApplyMsg		  // applyCh is a channel on which the tester or service expects Raft to send ApplyMsg messages.
-	applyCond *sync.Cond		      // applyCond is to control when to apply the log entry to the state machine.
+	applyCond *sync.Cond		  // applyCond is to control when to apply the log entry to the state machine.
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -283,7 +283,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.role = "follower"
 	}
 
-	// If the AppendEntries RPC is a heartbeat, then return true directly.
+	// If the AppendEntries RPC is a heartbeat, return true when the follower's log is up-to-date.
 	if args.IsHeartbeat {
 		reply.Success = true
 
@@ -302,7 +302,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// Use heartbeat to update commitIndex.
 		// It's nessecary to check lastLogTerm == args.Term when modify commitIndex,
-		// becuse the follower whose log is wrong may commit/apply the wrong log entry.
+		// becuse the follower whose log is wrong may store the wrong log entry.
 		if args.LeaderCommit > rf.commitIndex && lastLogTerm == args.Term {
 			if lastLogIndex > args.LeaderCommit {
 				rf.commitIndex = args.LeaderCommit
@@ -316,18 +316,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	// Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm.
+	// Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm.
 	// It's nessary to check args.PrevLogIndex < len(rf.log) to avoid array out of range.
 	if args.PrevLogIndex >= len(rf.log) || 
 	   args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
-
-		fmt.Printf("behindhand log - [%v]: ", rf.me)
-			for j := 0; j < len(rf.log); j++ {
-				fmt.Printf("%v-%v ", rf.log[j].Command, rf.log[j].Term)
-			}
-			fmt.Printf("\n")
-		
 		reply.Success = false
+
+		rf.persist()
 		return
 	} 
 	
@@ -533,8 +528,6 @@ func (rf *Raft) reachAgreement(index int) {
 	rf.mu.Lock()
 
 	// The number of votes received
-	appendSuccess := 1
-	var appendSuccess_mu sync.Mutex
 
 	currentTerm := rf.currentTerm
 	me := rf.me
@@ -572,6 +565,8 @@ func (rf *Raft) reachAgreement(index int) {
 				// log entries to store (empty for heartbeat; may send more than one for efficiency)
 				entries := rf.log[rf.nextIndex[server]:]
 
+				fmt.Printf("%d ---sendAppendEntries---> %d, %d.term=%d, len of log=%d\n", me, server, me, currentTerm, len(rf.log))
+
 				rf.mu.Unlock()
 
 				args := &AppendEntriesArgs{currentTerm, me, prevLogIndex, prevLogTerm, entries, leaderCommit, false}
@@ -607,15 +602,18 @@ func (rf *Raft) reachAgreement(index int) {
 				}
 
 				if reply.Success {
-					appendSuccess_mu.Lock()
-					appendSuccess++
-					appendSuccess_mu.Unlock()
-
 					rf.nextIndex[server] = index + 1
-					rf.matchIndex[server] = index
+					if index > rf.matchIndex[server] {
+						rf.matchIndex[server] = index
+					}
+
+					// fmt.Printf("matchIndex: ")
+					// for i := 0; i < peers_num; i++ {
+					// 	fmt.Printf("%d ", rf.matchIndex[i])
+					// }
+					// fmt.Println("")
 
 					rf.persist()
-
 					rf.mu.Unlock()
 					break;
 				}
@@ -627,30 +625,12 @@ func (rf *Raft) reachAgreement(index int) {
 					panic("nextIndex can't be zero")
 				}
 			}
-			
-			appendSuccess_mu.Lock()
-			// If the AppendEntries RPC gets enough append success, 
-			// inform the clients immediately and increase commitIndex.
-			if 2 * appendSuccess >= peers_num {
-				rf.mu.Lock()
-
-				if index > rf.commitIndex {
-					rf.commitIndex = index
-					rf.applyCond.Signal()
-				}
-
-				rf.persist()
-				appendSuccess_mu.Unlock()
-				rf.mu.Unlock()
-				return
-			}
-			appendSuccess_mu.Unlock()
 		}(i)
 	}
 }
 
 func (rf *Raft) applyToStateMachine() {
-	for {
+	for !rf.killed() {
 		rf.mu.Lock()
 
 		// Wait for commitIndex's change.
@@ -697,14 +677,19 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 
 		rf.mu.Lock()
-		// Check if the heartbeat has timed out. (300 ms)
-		if rf.role != "leader" && time.Since(rf.lastTimer) > 300 * time.Millisecond {
+		// Check if the heartbeat has timed out. (600 ms)
+		if rf.role != "leader" && time.Since(rf.lastTimer) > 600 * time.Millisecond {
 			rf.role = "candidate"
 		}
 		rf.mu.Unlock()
 
 		rf.mu.Lock()
 		for rf.role == "candidate" {
+			if rf.killed() {
+				rf.mu.Unlock()
+				return
+			}
+
 			// Enter startElection() with Lock.
 			rf.startElection()
 			// Exit startElection() with Lock.
@@ -831,9 +816,12 @@ func (rf *Raft) startElection() {
 					rf.matchIndex[i] = 0
 				}
 
-				// Enter sendHeartbeat() with lock.
-				rf.sendHeartbeat()
-				// Exit sendHeartbeat() with lock.
+				// the leader sends heartbeats.
+				go rf.sendHeartbeat()
+
+				// the leader's background job to increase commitIndex when matchIndexes is enough.
+				go rf.increCommitIndex()
+
 				rf.mu.Unlock()
 				return
 			}
@@ -854,6 +842,8 @@ func (rf *Raft) startElection() {
 // Once elected as leader, the server starts to send heartbeats every 100ms.
 func (rf *Raft) sendHeartbeat() {
 	// Enter sendHeartbeat() with lock.
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	currentTerm := rf.currentTerm
 	me := rf.me
@@ -897,6 +887,10 @@ func (rf *Raft) sendHeartbeat() {
 				// If we send AppendEntries RPC with rf.mu lock, there will be a deadlock.
 				// Call() in sendAppendEntries is guaranteed to return, but may not return soon.
 				// So the server becomes leader once it gets enough votes.
+				rf.mu.Lock()
+				fmt.Printf("%d ---sendHeartbeat---> %d, %d.term=%d, len of log=%d\n", me, server, me, currentTerm, len(rf.log))
+				rf.mu.Unlock()
+				
 				ok := rf.sendAppendEntries(server, args, reply)
 
 				// Check if the server is still the leader. 
@@ -991,10 +985,19 @@ func (rf *Raft) sendHeartbeat() {
 	
 					if reply.Success {
 						rf.nextIndex[server] = leaderCommit + 1
-						rf.matchIndex[server] = leaderCommit
+						if leaderCommit > rf.matchIndex[server] {
+							rf.matchIndex[server] = leaderCommit
+						}
+
+						// fmt.Printf("matchIndex: ")
+						// for i := 0; i < peers_num; i++ {
+						// 	fmt.Printf("%d ", rf.matchIndex[i])
+						// }
+						// fmt.Println("")
 
 						rf.persist()
-						break
+						rf.mu.Unlock()
+						return
 					}
 
 					fmt.Printf("server: %d, rf.nextIndex[server]: %d\n", server, rf.nextIndex[server])
@@ -1008,17 +1011,88 @@ func (rf *Raft) sendHeartbeat() {
 						panic("nextIndex can't be zero")
 					}
 				}
-
-				rf.mu.Unlock()
 			}(i)
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 		rf.mu.Lock()
 	}
 
 	// leader convert to follower
 	rf.role = "follower"
+}
+
+func (rf *Raft) increCommitIndex() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	peers_num := len(rf.peers)
+	me := rf.me
+
+	for !rf.killed() && rf.role == "leader"{
+		commitIndex := rf.commitIndex
+
+		fmt.Printf("matchIndex: ")
+		for i := 0; i < peers_num; i++ {
+			fmt.Printf("%d ", rf.matchIndex[i])
+		}
+		fmt.Println("")
+
+		// to find the min value of matchIndex except mine (always 0)
+		var minMatchIndex int
+		for i := 0; i < peers_num; i++ {
+			if i == me {
+				continue
+			}
+
+			if (i == 0 && me != 0) || (i == 1 && me == 0) {
+				minMatchIndex = rf.matchIndex[i]
+			}
+
+			if rf.matchIndex[i] < minMatchIndex {
+				minMatchIndex = rf.matchIndex[i]
+			}
+		}
+
+		// fmt.Println("minMatchIndex: ", minMatchIndex)
+
+		N := minMatchIndex
+		// fmt.Println("N: ", N)
+		for {
+			if N > commitIndex {
+				commitIndex = N
+			}
+
+			N++
+
+			// fmt.Println("N: ", N)
+			num := 1
+			for i := 0; i < peers_num; i++ {
+				if i == me {
+					continue
+				}
+				
+				// TODO: if rf.matchIndex[i] >= N && rf.log[N].Term == rf.currentTerm {
+				if rf.matchIndex[i] >= N {
+					num++
+				}
+			}
+
+			if 2 * num < peers_num {
+				break
+			}
+		}
+
+		if commitIndex > rf.commitIndex {
+			rf.commitIndex = commitIndex
+			fmt.Println("commitIndex: ", commitIndex)
+			rf.applyCond.Signal()
+		}
+
+		rf.mu.Unlock()
+		time.Sleep(time.Duration(100) * time.Millisecond)
+		rf.mu.Lock()
+	}
 }
 
 //
