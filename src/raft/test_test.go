@@ -999,10 +999,10 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		leader := -1
 		for i := 0; i < servers; i++ {
 			cmd := rand.Int() % 10000
-			_, _, ok := cfg.rafts[i].Start(cmd)
+			index, _, ok := cfg.rafts[i].Start(cmd)
 			if ok && cfg.connected[i] {
 				leader = i
-				fmt.Printf("leader: %d, cmd: %d\n", leader, cmd)
+				fmt.Printf("leader: %d, cmd: %d, index: %d\n", leader, cmd, index)
 			}
 		}
 

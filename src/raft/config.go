@@ -150,6 +150,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 	}
 	_, prevok := cfg.logs[i][m.CommandIndex-1]
 	cfg.logs[i][m.CommandIndex] = v
+	fmt.Printf("checkLogs: {i: %d, m.CommandIndex: %d, v: %v}\n", i, m.CommandIndex, v)
 	if m.CommandIndex > cfg.maxIndex {
 		cfg.maxIndex = m.CommandIndex
 	}
@@ -160,6 +161,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 // contents
 func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 	for m := range applyCh {
+		fmt.Printf("applier :{i: %d, m.CommandValid: %v, m.CommandIndex: %d, m.Command: %v}\n", i, m.CommandValid, m.CommandIndex, m.Command)
 		if m.CommandValid == false {
 			// ignore other types of ApplyMsg
 		} else {
@@ -358,7 +360,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	fmt.Printf("connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -381,7 +383,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	// fmt.Printf("disconnect(%d)\n", i)
+	fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
 
@@ -503,6 +505,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 
 		cfg.mu.Lock()
 		cmd1, ok := cfg.logs[i][index]
+		fmt.Printf("nCommitted: {i: %d, index: %d, cmd1: %v, ok: %v}\n", i, index, cmd1, ok)
 		cfg.mu.Unlock()
 
 		if ok {
@@ -589,6 +592,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				fmt.Printf("one: {nd: %d, cmd1: %v, cmd: %v, expectedServers: %d}\n", nd, cmd1, cmd, expectedServers)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
