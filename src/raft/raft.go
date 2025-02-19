@@ -349,7 +349,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.commitIndex = lastLogIndex
 			}
 			rf.applyCond.Signal()
-			fmt.Printf("heartbeat: {me: %d   updated commitIndex: %d}\n", rf.me, rf.commitIndex)
+			fmt.Printf("heartbeat: {me: %d   updated commitIndex: %d   lastLogIndex: %d   args.LeaderCommit: %d}\n", rf.me, rf.commitIndex, lastLogIndex, args.LeaderCommit)
 		}
 
 		return
@@ -627,6 +627,12 @@ func (rf *Raft) reachAgreement(index int) {
 
 				fmt.Printf("%d ---sendAppendEntries---> %d, %d.term=%d, len of log=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, currentTerm, logLen, index, log[index], leaderCommit, prevLogIndex)
 
+				fmt.Printf("send log - [%v]: ", rf.me)
+				for j := 0; j < len(rf.log); j++ {
+					fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
+				}
+				fmt.Printf("\n")
+
 				rf.mu.Unlock()
 
 				args := &AppendEntriesArgs{currentTerm, me, prevLogIndex, prevLogTerm, entries, leaderCommit}
@@ -666,7 +672,10 @@ func (rf *Raft) reachAgreement(index int) {
 
 				if reply.Success {
 					if index + 1 > rf.nextIndex[server] {
-						rf.nextIndex[server] = index + 1
+						// ATTENTION: Must update all the nextIndex!!!
+						for j := range rf.nextIndex {
+							rf.nextIndex[j] = index + 1
+						}
 					}
 					if index > rf.matchIndex[server] {
 						rf.matchIndex[server] = index
@@ -870,7 +879,6 @@ func (rf *Raft) startElection() {
 
 				// Initialize the leader's data.
 				for i := range rf.nextIndex {
-					// rf.nextIndex[i] = rf.commitIndex + 1
 					rf.nextIndex[i] = len(rf.log)
 				}
 				for i := range rf.matchIndex {
@@ -1021,6 +1029,12 @@ func (rf *Raft) sendHeartbeat() {
 	
 					// log entries to store (empty for heartbeat; may send more than one for efficiency)
 					entries := log[nextIndex:]
+
+					fmt.Printf("send log - [%v]: ", rf.me)
+					for j := 0; j < len(rf.log); j++ {
+						fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
+					}
+					fmt.Printf("\n")
 	
 					rf.mu.Unlock()
 	
@@ -1062,7 +1076,10 @@ func (rf *Raft) sendHeartbeat() {
 	
 					if reply.Success {
 						if leaderCommit + 1 > rf.nextIndex[server] {
-							rf.nextIndex[server] = leaderCommit + 1
+							// ATTENTION: Must update all the nextIndex!!!
+							for j := range rf.nextIndex {
+								rf.nextIndex[j] = leaderCommit + 1
+							}
 						}
 						if leaderCommit > rf.matchIndex[server] {
 							rf.matchIndex[server] = leaderCommit
