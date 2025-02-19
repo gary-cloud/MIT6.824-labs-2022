@@ -316,6 +316,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
 			}
 			fmt.Printf("\n")
+
+			return
 		} else if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
 			reply.Success = false
 
@@ -333,6 +335,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			// ATTENTION: If an existing entry conflicts with a new one (same index but different terms), 
 			// delete the existing entry and all that follow it!!!
 			rf.log = rf.log[:args.PrevLogIndex]
+
+			return
 		}
 
 		// Use heartbeat to update commitIndex.
@@ -357,15 +361,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm.
 	// It's nessary to check args.PrevLogIndex < len(rf.log) to avoid array out of range.
-	if args.PrevLogIndex >= len(rf.log) || 
-	   args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+	if args.PrevLogIndex >= len(rf.log) {
 		reply.Success = false
 		return
-	} 
-	
-	// Committed log entries cannot be overwritten.
-	if rf.commitIndex > args.PrevLogIndex {
-		panic("Leader try to cover committed log entries")
+	} else if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+		reply.Success = false
+
+		// Committed log entries cannot be overwritten.
+		if rf.commitIndex > args.PrevLogIndex {
+			fmt.Printf("rf.me: %d   rf.commitIndex: %d   args.PrevLogIndex: %d   len of log: %d\n", rf.me, rf.commitIndex, args.PrevLogIndex, len(rf.log))
+			panic("Leader try to cover committed log entries")
+		}
+
+		// ATTENTION: If an existing entry conflicts with a new one (same index but different terms), 
+		// delete the existing entry and all that follow it!!!
+		rf.log = rf.log[:args.PrevLogIndex]
+		return
 	}
 	
 	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it.
@@ -1153,7 +1164,6 @@ func (rf *Raft) increCommitIndex() {
 
 		N := minMatchIndex
 		for N < len(rf.log) {
-			fmt.Println("N: ", N)
 			num := 1
 			for i := 0; i < peers_num; i++ {
 				if i == me {
