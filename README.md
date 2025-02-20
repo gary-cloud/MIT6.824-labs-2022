@@ -54,7 +54,7 @@ PASS
 ok      6.824/raft      48.198s
 ```
 ### Part C: persistence ✔
-```
+```shell
 $ go test -race -run 2C
 Test (2C): basic persistence ...
   ... Passed --   7.1  3  143   29560    7
