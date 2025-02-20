@@ -114,6 +114,8 @@ type Raft struct {
 
 	// RequestVoteRPCMu[] sync.Mutex
 
+	HeartbeatRPCMu[] sync.Mutex
+
 	// for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
 	matchIndex[] int
 }
@@ -265,12 +267,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
-	fmt.Printf("AppendEntries log - [%v]: ", rf.me)
-	for j := 0; j < len(rf.log); j++ {
-		fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-	}
-	fmt.Printf("\n")
+	rand := rand.Intn(10000)
 
+	fmt.Printf("{%d}, AppendEntries log BEGIN - [%v]: %d\n", rand, rf.me, len(rf.log))
+	defer fmt.Printf("{%d}, AppendEntries log END - [%v]: %d\n", rand, rf.me, len(rf.log))
+	
 	reply.Term = rf.currentTerm
 	
 	// Reply false if term < currentTerm.
@@ -287,104 +288,30 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.role = "follower"
 	}
 
-	// If the AppendEntries RPC is a heartbeat, return true when the follower's log is up-to-date.
-	if args.Entries == nil {
-		reply.Success = true
-
-		// lastLogIndex := len(rf.log) - 1
-		// lastLogTerm := rf.log[lastLogIndex].Term
-
-		// leader: 0.null-1, 1.xxx.5
-		// follower: 0.null-1, 1.yyy-2, 2.zzz-2
-		// heartbeat return false
-		// if args.LeaderCommit > 0 && args.LeaderCommit > lastLogIndex {
-		// if args.LeaderCommit > 0 && (args.LeaderCommit > lastLogIndex || args.LeaderCommit <= lastLogIndex && args.Term > lastLogTerm) {
-		// 	reply.Success = false
-
-		// 	fmt.Printf("inconsistent log - [%v]: ", rf.me)
-		// 	for j := 0; j < len(rf.log); j++ {
-		// 		fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-		// 	}
-		// 	fmt.Printf("\n")
-		// }
-
-		if args.PrevLogIndex >= len(rf.log) {
-			reply.Success = false
-
-			fmt.Printf("inconsistent log - [%v]: ", rf.me)
-			for j := 0; j < len(rf.log); j++ {
-				fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-			}
-			fmt.Printf("\n")
-
-			return
-		} else if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
-			reply.Success = false
-
-			fmt.Printf("inconsistent log - [%v]: ", rf.me)
-			for j := 0; j < len(rf.log); j++ {
-				fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-			}
-			fmt.Printf("\n")
-
-			// Committed log entries cannot be deleted.
-			if rf.commitIndex + 1 > args.PrevLogIndex {
-				panic("Leader try to delete committed log entries")
-			}
-
-			// ATTENTION: If an existing entry conflicts with a new one (same index but different terms), 
-			// delete the existing entry and all that follow it!!!
-			rf.log = rf.log[:args.PrevLogIndex]
-
-			return
-		}
-
-		// Use heartbeat to update commitIndex.
-		// It's nessecary to check lastLogTerm == args.Term when modify commitIndex,
-		// becuse the follower whose log is wrong may store the wrong log entry.
-
-		lastLogIndex := len(rf.log) - 1
-
-		// if args.LeaderCommit > rf.commitIndex && lastLogTerm == args.Term {
-		if args.LeaderCommit > rf.commitIndex {
-			if lastLogIndex > args.LeaderCommit {
-				rf.commitIndex = args.LeaderCommit
-			} else {
-				rf.commitIndex = lastLogIndex
-			}
-			rf.applyCond.Signal()
-			fmt.Printf("heartbeat: {me: %d   updated commitIndex: %d   lastLogIndex: %d   args.LeaderCommit: %d}\n", rf.me, rf.commitIndex, lastLogIndex, args.LeaderCommit)
-		}
-
-		return
-	}
-
 	// Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm.
 	// It's nessary to check args.PrevLogIndex < len(rf.log) to avoid array out of range.
-	if args.PrevLogIndex >= len(rf.log) {
+	if args.PrevLogIndex >= len(rf.log) || args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
 		reply.Success = false
-		return
-	} else if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
-		reply.Success = false
-
-		// Committed log entries cannot be overwritten.
-		if rf.commitIndex > args.PrevLogIndex {
-			fmt.Printf("rf.me: %d   rf.commitIndex: %d   args.PrevLogIndex: %d   len of log: %d\n", rf.me, rf.commitIndex, args.PrevLogIndex, len(rf.log))
-			panic("Leader try to cover committed log entries")
-		}
-
-		// ATTENTION: If an existing entry conflicts with a new one (same index but different terms), 
-		// delete the existing entry and all that follow it!!!
-		rf.log = rf.log[:args.PrevLogIndex]
 		return
 	}
-	
-	// If an existing entry conflicts with a new one (same index but different terms), delete the existing entry and all that follow it.
-	rf.log = rf.log[:args.PrevLogIndex + 1]
 
-	// Append any new entries not already in the log.
-	rf.log = append(rf.log, args.Entries...)
-	
+	if args.Entries != nil {
+		// ATTENTION: If an existing entry conflicts with a new one from RPC args (same index but different terms), 
+		// delete the existing entry and all that follow it!!!
+		i, j := args.PrevLogIndex + 1, 0
+		for ; i < len(rf.log) && j < len(args.Entries); i, j = i+1, j+1 {
+			if rf.log[i].Term != args.Entries[j].Term {
+				rf.log = rf.log[:i]
+				// ATTENTION: Append any new entries not already in the log.
+				rf.log = append(rf.log, args.Entries[j:]...)
+				break
+			}
+		}
+		if i == len(rf.log) {
+			rf.log = append(rf.log, args.Entries[j:]...)
+		}
+	}
+
 	// Commit message will be implicit in the next AppendEntries RPC.
 	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 	lastLogIndex := len(rf.log) - 1
@@ -395,7 +322,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = lastLogIndex
 		}
 		rf.applyCond.Signal()
-		fmt.Printf("AppendEntries: {me: %d   updated commitIndex: %d   lastLogIndex: %d   args.LeaderCommit: %d}\n", rf.me, rf.commitIndex, lastLogIndex, args.LeaderCommit)
+		fmt.Printf("{%d}, AppendEntries: {me: %d   updated commitIndex: %d   lastLogIndex: %d   args.LeaderCommit: %d   len of log: %d    isHeartbeat: %v}\n", rand, rf.me, rf.commitIndex, lastLogIndex, args.LeaderCommit, len(rf.log), args.Entries == nil)
 	}
 
 	reply.Success = true
@@ -688,6 +615,12 @@ func (rf *Raft) reachAgreement(index int) {
 							rf.nextIndex[j] = index + 1
 						}
 					}
+					
+					// for j := range rf.nextIndex {
+					// 	if len(rf.log) > rf.nextIndex[j] {
+					// 		rf.nextIndex[j] = len(rf.log)
+					// 	}
+					// }
 					if index > rf.matchIndex[server] {
 						rf.matchIndex[server] = index
 					}
@@ -723,9 +656,10 @@ func (rf *Raft) applyToStateMachine() {
 		// for rf.lastApplied < rf.commitIndex && rf.lastApplied < len(rf.log) - 1 {
 		for rf.lastApplied < rf.commitIndex {
 			rf.lastApplied++
+			fmt.Printf("Before ApplyMsg me: %d\n", rf.me)
 			applyMsg := ApplyMsg{true, rf.log[rf.lastApplied].Command, rf.lastApplied, false, nil, -1, -1}
 			rf.applyCh <- applyMsg
-			fmt.Printf("me: %d   applyMsg: %v\n", rf.me, applyMsg)
+			fmt.Printf("After ApplyMsg me: %d   applyMsg: %v\n", rf.me, applyMsg)
 		}
 
 		rf.mu.Unlock()
@@ -1029,6 +963,8 @@ func (rf *Raft) sendHeartbeat() {
 				}
 				fmt.Printf("\n")
 
+				// rf.HeartbeatRPCMu[server].Lock()
+
 				nextIndex := rf.nextIndex[server]
 				log := rf.log
 				for {
@@ -1058,13 +994,15 @@ func (rf *Raft) sendHeartbeat() {
 
 					if rf.role != "leader" {
 						rf.mu.Unlock()
+						// rf.HeartbeatRPCMu[server].Unlock()
 						return
 					}
 
-					fmt.Printf("%d ---sendAppendEntries after heartbeat OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, len of entries=%d\n", me, server, me, currentTerm, server, reply.Term, reply.Success, len(log), len(entries))
+					fmt.Printf("%d ---sendAppendEntries after heartbeat OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, len of entries=%d, prevLogIndex=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, currentTerm, server, reply.Term, reply.Success, len(log), len(entries), prevLogIndex, rf.log[prevLogIndex], leaderCommit, prevLogIndex)
 					fmt.Printf("server: %d, nextIndex[server]: %d\n", server, nextIndex)
 					if !ok {
 						rf.mu.Unlock()
+						// rf.HeartbeatRPCMu[server].Unlock()
 						return
 					}
 
@@ -1080,6 +1018,7 @@ func (rf *Raft) sendHeartbeat() {
 
 						rf.persist()
 						rf.mu.Unlock()
+						// rf.HeartbeatRPCMu[server].Unlock()
 						return
 					}
 
@@ -1092,6 +1031,11 @@ func (rf *Raft) sendHeartbeat() {
 								rf.nextIndex[j] = leaderCommit + 1
 							}
 						}
+						// for j := range rf.nextIndex {
+						// 	if len(rf.log) > rf.nextIndex[j] {
+						// 		rf.nextIndex[j] = len(rf.log)
+						// 	}
+						// }
 						if leaderCommit > rf.matchIndex[server] {
 							rf.matchIndex[server] = leaderCommit
 						}
@@ -1103,6 +1047,7 @@ func (rf *Raft) sendHeartbeat() {
 						// fmt.Println("")
 
 						rf.mu.Unlock()
+						// rf.HeartbeatRPCMu[server].Unlock()
 						return
 					}
 
@@ -1227,6 +1172,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(rf.peers))
 	// rf.AppendEntriesRPCMu = make([]sync.Mutex, len(rf.peers))
 	// rf.RequestVoteRPCMu = make([]sync.Mutex, len(rf.peers))
+	rf.HeartbeatRPCMu = make([]sync.Mutex, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.applyCh = applyCh
 	rf.applyCond = sync.NewCond(&rf.mu)
