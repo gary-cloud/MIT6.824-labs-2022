@@ -810,16 +810,16 @@ retry:
 			fmt.Printf("Before ApplyMsg me: %d   applyMsg: %v\n", rf.me, applyMsg)
 			select {
 				case rf.applyCh <- applyMsg:
-					fmt.Println("send successfully")
+					fmt.Println("Send successfully")
 					fmt.Printf("After ApplyMsg me: %d   applyMsg: %v\n", rf.me, applyMsg)
-				default:
-					fmt.Println("buffer is full, skip sending this time")
+				// Timeout control: give up sending after 50ms.
+				// Change the way of sending applyMsgs from non-blocking to timeout control.
+				case <-time.After(50 * time.Millisecond):
+					fmt.Println("Buffer is full more than 50ms, skip sending this time to avoid deadlock")
 					rf.lastApplied--
 					goto retry
 			}
-			// rf.applyCh <- applyMsg
 		}
-
 		rf.mu.Unlock()
 	}
 }
