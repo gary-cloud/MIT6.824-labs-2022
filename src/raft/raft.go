@@ -20,7 +20,6 @@ package raft
 import (
 	"bytes"
 	"math/rand"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -327,7 +326,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// The snapshot generation of the follower before the leader causes this situation below.
 	// Return true to stop leader from sending more entries.
-	if args.PrevLogIndex - rf.lastIncludedIndex < 0 {
+	if args.PrevLogIndex < rf.lastIncludedIndex {
 		fmt.Printf("args.PrevLogIndex: %d, rf.lastIncludedIndex: %d\n", args.PrevLogIndex, rf.lastIncludedIndex)
 		fmt.Printf("before log - [%v]: ", rf.me)
 		for j := 0; j < len(rf.log); j++ {
@@ -345,7 +344,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		fmt.Printf("lastIncludedIndex - [%v]: %v\n", rf.me, rf.lastIncludedIndex)
 
 		// panic("args.PrevLogIndex - rf.lastIncludedIndex < 0")
-		reply.Success = true
+		reply.Success = false
 		return
 	}
 
@@ -701,25 +700,18 @@ func (rf *Raft) reachAgreement(index int) {
 				return
 			}
 
-			nextIndex := rf.nextIndex[server]
-			log := rf.log
-			lastIncludedIndex := rf.lastIncludedIndex
-			logLen := len(log) + rf.lastIncludedIndex
 			for {
 				// index of log entry immediately preceding new ones
-				prevLogIndex := nextIndex - 1
-
-				if prevLogIndex >= logLen {
-					panic("prevLogIndex: " + strconv.Itoa(prevLogIndex) + "; len of log: " + strconv.Itoa(logLen))
-				}
+				nextIndex := rf.nextIndex[server]
+				prevLogIndex := rf.nextIndex[server] - 1
 
 				// term of prevLogIndex entry.
-				prevLogTerm := log[prevLogIndex - lastIncludedIndex].Term
+				prevLogTerm := rf.log[prevLogIndex - rf.lastIncludedIndex].Term
 
 				// log entries to store (empty for heartbeat; may send more than one for efficiency)
-				entries := log[nextIndex - lastIncludedIndex:]
+				entries := rf.log[rf.nextIndex[server] - rf.lastIncludedIndex:]
 				
-				fmt.Printf("%d ---sendAppendEntries---> %d, %d.term=%d, len of log=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, logLen, index, log[index - lastIncludedIndex], leaderCommit, prevLogIndex)
+				fmt.Printf("%d ---sendAppendEntries---> %d, %d.term=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, index, rf.log[index - rf.lastIncludedIndex], leaderCommit, prevLogIndex)
 
 				args := &AppendEntriesArgs{rf.currentTerm, me, prevLogIndex, prevLogTerm, entries, leaderCommit}
 				reply := &AppendEntriesReply{}
@@ -735,7 +727,7 @@ func (rf *Raft) reachAgreement(index int) {
 					return
 				}
 
-				fmt.Printf("%d ---sendAppendEntries OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, logLen, index, log[index - lastIncludedIndex], leaderCommit, prevLogIndex)
+				// fmt.Printf("%d ---sendAppendEntries OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, logLen, index, log[index - lastIncludedIndex], leaderCommit, prevLogIndex)
 
 				if !ok {
 					// ATTENTION: If network is slow, the leader may not receive the response in time.
@@ -777,14 +769,19 @@ func (rf *Raft) reachAgreement(index int) {
 					return
 				}
 
-				// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
-				nextIndex--
+				// If aother AppendEntries RPC changes the nextIndex, don't decrease it and just retry.
+				if nextIndex != rf.nextIndex[server] {
+					continue
+				}
 
-				if nextIndex == 0 {
+				// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
+				rf.nextIndex[server]--
+
+				if rf.nextIndex[server] == 0 {
 					panic("nextIndex can't be zero")
 				}
 
-				if nextIndex - lastIncludedIndex == 0 {
+				if rf.nextIndex[server] - rf.lastIncludedIndex == 0 {
 
 					rf.mu.Unlock()
 					return
@@ -1126,18 +1123,16 @@ func (rf *Raft) sendHeartbeat() {
 					return
 				}
 
-				nextIndex := rf.nextIndex[server]
-				log := rf.log
-				lastIncludedIndex := rf.lastIncludedIndex
 				for {
 					// index of log entry immediately preceding new ones
-					prevLogIndex := nextIndex - 1
+					nextIndex := rf.nextIndex[server]
+					prevLogIndex := rf.nextIndex[server] - 1
 	
 					// term of prevLogIndex entry.
-					prevLogTerm := log[prevLogIndex - lastIncludedIndex].Term
+					prevLogTerm := rf.log[prevLogIndex - rf.lastIncludedIndex].Term
 	
 					// log entries to store (empty for heartbeat; may send more than one for efficiency)
-					entries := log[nextIndex - lastIncludedIndex:]
+					entries := rf.log[rf.nextIndex[server] - rf.lastIncludedIndex:]
 
 					args := &AppendEntriesArgs{rf.currentTerm, me, prevLogIndex, prevLogTerm, entries, leaderCommit}
 					reply := &AppendEntriesReply{}
@@ -1153,7 +1148,7 @@ func (rf *Raft) sendHeartbeat() {
 						return
 					}
 
-					fmt.Printf("%d ---sendAppendEntries after heartbeat OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, len of entries=%d, prevLogIndex=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, len(log), len(entries), prevLogIndex, log[prevLogIndex - lastIncludedIndex], leaderCommit, prevLogIndex)
+					// fmt.Printf("%d ---sendAppendEntries after heartbeat OK---> %d, %d.term=%d, %d.term=%d, success=%t, len of log=%d, len of entries=%d, prevLogIndex=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, len(log), len(entries), prevLogIndex, log[prevLogIndex - lastIncludedIndex], leaderCommit, prevLogIndex)
 
 					if !ok {
 						rf.mu.Unlock()
@@ -1186,14 +1181,20 @@ func (rf *Raft) sendHeartbeat() {
 						return
 					}
 
-					// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
-					nextIndex--
 
-					if nextIndex == 0 {
+					// If aother AppendEntries RPC changes the nextIndex, don't decrease it and just retry.
+					if nextIndex != rf.nextIndex[server] {
+						continue
+					}
+
+					// After a rejection, the leader decrements nextIndex and retries the AppendEntries RPC.
+					rf.nextIndex[server]--
+
+					if rf.nextIndex[server] == 0 {
 						panic("nextIndex can't be zero")
 					}
 
-					if nextIndex - lastIncludedIndex == 0 {
+					if rf.nextIndex[server] - rf.lastIncludedIndex == 0 {
 						
 						rf.mu.Unlock()
 						return
