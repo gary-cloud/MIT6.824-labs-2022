@@ -75,7 +75,24 @@ Test (2C): unreliable churn ...
 PASS
 ok      6.824/raft      155.064s
 ```
-### Part D: log compaction
+### Part D: log compaction ✔
+```shell
+$ go test -race -run 2D
+Test (2D): snapshots basic ...
+  ... Passed --   8.4  3  582  191936  231
+Test (2D): install snapshots (disconnect) ...
+  ... Passed --  57.9  3 2139  996844  334
+Test (2D): install snapshots (disconnect+unreliable) ...
+  ... Passed --  64.3  3 2186  938153  286
+Test (2D): install snapshots (crash) ...
+  ... Passed --  85.0  3 2117  697317  335
+Test (2D): install snapshots (unreliable+crash) ...
+  ... Passed --  101.3  3 2450  901664  365
+Test (2D): crash and restart all servers ...
+  ... Passed --  10.3  3  303   73400   61
+PASS
+ok      6.824/raft      328.281s
+```
 ## Lab 3: Fault-tolerant Key/Value Service
 ### Part A: Key/value service without snapshots
 ### Part B: Key/value service with snapshots

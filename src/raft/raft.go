@@ -23,7 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"fmt"
 
 	"6.824/labgob"
 	"6.824/labrpc"
@@ -249,8 +248,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		return
 	}
 
-	fmt.Printf("me=%d, index=%d, lastIncludedIndex=%d\n", rf.me, index, rf.lastIncludedIndex)
-
     // Calculate the actual index of the log slice.
     indexOffset := index - rf.lastIncludedIndex
 
@@ -343,7 +340,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					rf.commitIndex = rf.lastIncludedIndex
 				}
 			}
-			fmt.Printf("[Raft %d] commitIndex: %d\n", rf.me, rf.commitIndex)
 		}
 		
 		reply.Success = true
@@ -357,21 +353,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		return
 	}
-
-	fmt.Printf("before log - [%v]: ", rf.me)
-	for j := 0; j < len(rf.log); j++ {
-		fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-	}
-	fmt.Printf("\n")
-
-	fmt.Printf("entries - [%v]: ", rf.me)
-	for j := 0; j < len(args.Entries); j++ {
-		fmt.Printf("%d.%v-%v ", j, args.Entries[j].Command, args.Entries[j].Term)
-	}
-	fmt.Printf("\n")
-
-	fmt.Printf("prevLogIndex - [%v]: %v\n", rf.me, args.PrevLogIndex)
-	fmt.Printf("lastIncludedIndex - [%v]: %v\n", rf.me, rf.lastIncludedIndex)
 
 	if args.Entries != nil {
 		// ATTENTION: If an existing entry conflicts with a new one from RPC args (same index but different terms), 
@@ -392,12 +373,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
-	fmt.Printf("after log - [%v]: ", rf.me)
-	for j := 0; j < len(rf.log); j++ {
-		fmt.Printf("%d.%v-%v ", j, rf.log[j].Command, rf.log[j].Term)
-	}
-	fmt.Printf("\n")
-
 	// Commit message will be implicit in the next AppendEntries RPC.
 	// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 	lastLogIndex := len(rf.log) - 1 + rf.lastIncludedIndex
@@ -407,7 +382,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			rf.commitIndex = lastLogIndex
 		}
-		fmt.Printf("[Raft %d] commitIndex: %d\n", rf.me, rf.commitIndex)
 	}
 	
 	reply.Success = true
@@ -462,8 +436,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 	defer rf.persist()
 
-	fmt.Printf("RequestVote() {currentTerm: %d; args.Term: %d}\n", rf.currentTerm, args.Term)
-
 	reply.Term = rf.currentTerm
 
 	// Reply false if term < currentTerm.
@@ -496,8 +468,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		lastLogTerm = rf.lastIncludedTerm
 	}
-
-	fmt.Printf("RequestVote() {lastLogIndex: %d, lastLogTerm: %d; args.LastLogIndex: %d, args.LastLogTerm: %d}\n", lastLogIndex, lastLogTerm, args.LastLogIndex, args.LastLogTerm)
 
 	if args.LastLogTerm > lastLogTerm {
 		reply.VoteGranted = true
@@ -744,8 +714,6 @@ func (rf *Raft) reachAgreement(index int) {
 				// log entries to store (empty for heartbeat; may send more than one for efficiency)
 				entries := rf.log[rf.nextIndex[server] - rf.lastIncludedIndex:]
 				
-				fmt.Printf("%d ---sendAppendEntries---> %d, %d.term=%d, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, index, rf.log[index - rf.lastIncludedIndex], leaderCommit, prevLogIndex)
-
 				args := &AppendEntriesArgs{rf.currentTerm, me, prevLogIndex, prevLogTerm, entries, leaderCommit}
 				reply := &AppendEntriesReply{}
 
@@ -767,8 +735,6 @@ func (rf *Raft) reachAgreement(index int) {
 					rf.mu.Unlock()
 					return
 				}
-
-				fmt.Printf("%d ---sendAppendEntries OK---> %d, %d.term=%d, %d.term=%d, success=%t, index=%d, cmd=%v, leaderCommit=%d, prevLogIndex=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, index, rf.log[index - rf.lastIncludedIndex], leaderCommit, prevLogIndex)
 
 				if !ok {
 					// ATTENTION: If network is slow, the leader may not receive the response in time.
@@ -854,20 +820,15 @@ retry:
 			}
 
 			if rf.lastApplied - rf.lastIncludedIndex >= len(rf.log) {
-				fmt.Printf("lastApplied: %d, lastIncludedIndex: %d, len(rf.log): %d, commitIndex: %d\n", rf.lastApplied, rf.lastIncludedIndex, len(rf.log), rf.commitIndex)
 				panic("lastApplied - rf.lastIncludedIndex: out of range")
 			}
 
 			applyMsg := ApplyMsg{true, rf.log[rf.lastApplied - rf.lastIncludedIndex].Command, rf.lastApplied, false, nil, -1, -1}
-			fmt.Printf("Before ApplyMsg me: %d   applyMsg: %v\n", rf.me, applyMsg)
 			select {
 				case rf.applyCh <- applyMsg:
-					fmt.Println("Send successfully")
-					fmt.Printf("After ApplyMsg me: %d   applyMsg: %v\n", rf.me, applyMsg)
 				// Timeout control: give up sending after 50ms.
 				// Change the way of sending applyMsgs from non-blocking to timeout control.
 				case <-time.After(50 * time.Millisecond):
-					fmt.Println("Buffer is full more than 50ms, skip sending this time to avoid deadlock")
 					rf.lastApplied--
 					goto retry
 			}
@@ -996,8 +957,6 @@ func (rf *Raft) startElection() {
 			args := &RequestVoteArgs{rf.currentTerm, me, lastLogIndex, lastLogTerm}
 			reply := &RequestVoteReply{}
 
-			fmt.Printf("%d ---sendRequestVote---> %d, args=%v\n", me, server, args)
-
 			rf.mu.Unlock()
 			
 			// If we send RequestVote RPC with rf.mu lock, there will be a deadlock.
@@ -1007,8 +966,6 @@ func (rf *Raft) startElection() {
 			// Check if the server is still the candidate. 
 			// The candidate may notice there is a term bigger than its own through RPC, and changes to follower.
 			rf.mu.Lock()
-
-			fmt.Printf("%d ---sendRequestVote OK---> %d, args=%v, reply=%v\n", me, server, args, reply)
 
 			if rf.role != "candidate" {
 				rf.mu.Unlock()
@@ -1043,8 +1000,6 @@ func (rf *Raft) startElection() {
 				vote_mu.Unlock()
 				// Successfully elected as the leader.
 				rf.role = "leader"
-
-				fmt.Println("Elected ", rf.me, " as leader at term", rf.currentTerm)
 
 				// Initialize the leader's data.
 				for i := range rf.nextIndex {
@@ -1141,8 +1096,6 @@ func (rf *Raft) sendHeartbeat() {
 					return
 				}
 
-				fmt.Printf("%d ---sendHeartbeat---> %d, args=%v\n", me, server, args)
-
 				rf.mu.Unlock()
 				
 				// Send heartbeat
@@ -1164,8 +1117,6 @@ func (rf *Raft) sendHeartbeat() {
 					rf.mu.Unlock()
 					return
 				}
-
-				fmt.Printf("%d ---sendHeartbeat OK---> %d, %d.term=%d, %d.term=%d, success=%t, leaderCommit=%d\n", me, server, me, rf.currentTerm, server, reply.Term, reply.Success, leaderCommit)
 
 				// If a leader discovers that its term number has expired, 
 				// it immediately reverts to follower.
@@ -1337,7 +1288,6 @@ func (rf *Raft) increCommitIndex() {
 
 		if commitIndex > rf.commitIndex {
 			rf.commitIndex = commitIndex
-			fmt.Printf("increCommitIndex: {me: %d   updated commitIndex: %d}\n", rf.me, rf.commitIndex)
 			rf.applyCond.Signal()
 		}
 
@@ -1361,8 +1311,6 @@ func (rf *Raft) sendSnapshot(server int) bool {
 	if rf.role != "leader" {
 		return false
 	}
-
-	fmt.Printf("%d ---sendInstallSnapshot OK---> %d, args=%v, reply=%v\n", rf.me, server, args, reply)
 
 	if !ok {
 		return false
