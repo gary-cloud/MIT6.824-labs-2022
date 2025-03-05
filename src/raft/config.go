@@ -220,6 +220,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 
 	for m := range applyCh {
+		// fmt.Printf("applierSnap :{i: %d, m.CommandValid: %v, m.CommandIndex: %d, m.Command: %v}\n", i, m.CommandValid, m.CommandIndex, m.Command)
 		err_msg := ""
 		if m.SnapshotValid {
 			if rf.CondInstallSnapshot(m.SnapshotTerm, m.SnapshotIndex, m.Snapshot) {
