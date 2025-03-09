@@ -4,11 +4,22 @@ import "6.824/labrpc"
 import "crypto/rand"
 import "math/big"
 import "fmt"
+import "sync"
 
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+
+	// Remember which server turned out to be the leader for the last RPC, and send the next RPC to that server first.
+	// This will avoid wasting time searching for the leader on every RPC, which may help you pass some of the tests quickly enough.
+	lastLeader int
+
+	// store the seenIds to avoid duplicate operations.
+	seenIds map[int64]bool
+
+	// protect the seenIds.
+	seenIdsMu sync.Mutex
 }
 
 func nrand() int64 {
@@ -22,6 +33,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.lastLeader = 0
+	ck.seenIds = make(map[int64]bool)
 	return ck
 }
 
@@ -39,8 +52,20 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
-	args := GetArgs{Key: key}
-	for i := 0; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
+	id := nrand()
+
+	// get the first seenId.
+	var seenId int64
+	ck.seenIdsMu.Lock()
+	for seenId = range ck.seenIds {
+		break
+	}
+	ck.seenIdsMu.Unlock()
+
+	// Same id, same seenId.
+	args := GetArgs{Key: key, Id: id, SeenId: seenId}
+
+	for i := ck.lastLeader; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
 		// construct a new reply to avoid labgob warning.
 		reply := GetReply{}
 		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
@@ -50,6 +75,18 @@ func (ck *Clerk) Get(key string) string {
 		if reply.Err == ErrNoKey {
 			return ""
 		} else if reply.Err == OK {
+			ck.lastLeader = i
+
+			ck.seenIdsMu.Lock()
+			// add a new seenId.
+			ck.seenIds[id] = true
+			// free the memory of seenId.
+			_, ok = ck.seenIds[seenId]
+			if ok {
+				delete(ck.seenIds, seenId)
+			}
+			ck.seenIdsMu.Unlock()
+
 			return reply.Value
 		}
 	}
@@ -69,8 +106,20 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
-	args := PutAppendArgs{Key: key, Value: value, Op: op}
-	for i := 0; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
+	id := nrand()
+
+	// get the first seenId.
+	var seenId int64
+	ck.seenIdsMu.Lock()
+	for seenId = range ck.seenIds {
+		break
+	}
+	ck.seenIdsMu.Unlock()
+
+	// Same id, same seenId.
+	args := PutAppendArgs{Key: key, Value: value, Op: op, Id: id, SeenId: seenId}
+
+	for i := ck.lastLeader; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
 		// construct a new reply to avoid labgob warning.
 		reply := PutAppendReply{}
 		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
@@ -78,6 +127,18 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			fmt.Printf("PutAppend failed: %v\n", reply.Err)
 			continue
 		}
+		ck.lastLeader = i
+
+		ck.seenIdsMu.Lock()
+		// add a new seenId.
+		ck.seenIds[id] = true
+		// free the memory of seenId.
+		_, ok = ck.seenIds[seenId]
+		if ok {
+			delete(ck.seenIds, seenId)
+		}
+		ck.seenIdsMu.Unlock()
+
 		return
 	}
 }

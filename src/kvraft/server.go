@@ -30,6 +30,8 @@ type Op struct {
 	Type 	string
 	Key 	string
 	Value 	string
+	Id 		int64
+	SeenId 	int64
 }
 
 type KVServer struct {
@@ -45,6 +47,9 @@ type KVServer struct {
 
 	// key-value stored data.
 	data 	map[string]string
+	
+	// record identifiers of the operations completed to avoid duplicate operations.
+	completedIds	map[int64]string
 }
 
 
@@ -54,39 +59,54 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
+	var ok bool
+	var completedValue string
+
 	key :=  args.Key
+	id := args.Id
+	seenId := args.SeenId
+
+	_, ok = kv.completedIds[seenId]
+	if ok {
+		delete(kv.completedIds, seenId)
+	}
+
+	completedValue, ok = kv.completedIds[id]
+	if ok {
+		reply.Err = OK
+		fmt.Println("Get(): OK")
+		reply.Value = completedValue
+		return
+	}
 
 	// Start() will return immediately.
-	_, _, isLeader := kv.rf.Start(Op{Type: "Get", Key: key, Value: ""})
+	_, _, isLeader := kv.rf.Start(Op{Type: "Get", Key: key, Value: "", Id: id, SeenId: seenId})
 
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		fmt.Println("Get(): ErrWrongLeader")
-		reply.Value = ""
+		reply.Value = completedValue
 		return
 	}
 
-	select  {
-	case rep := <- kv.applyCh:
-		if rep.CommandValid == true && rep.Command.(Op).Type == "Get" && rep.Command.(Op).Key == key {
-			value, ok := kv.data[key]
-			if ok {
-				reply.Err = OK
-				fmt.Println("Get(): OK")
-				reply.Value = value
-			} else {
-				reply.Err = ErrNoKey
-				fmt.Println("Get(): ErrNoKey")
-				reply.Value = ""
-			}
+	rep := <- kv.applyCh
+
+	if rep.CommandValid == true && rep.Command.(Op).Type == "Get" && rep.Command.(Op).Key == key {
+		value, ok := kv.data[key]
+		if ok {
+			reply.Err = OK
+			fmt.Println("Get(): OK")
+			reply.Value = value
+			// record the identifier of the last operation.
+			kv.completedIds[id] = value
 		} else {
-			reply.Err = "WrongMessage"
-			fmt.Println("Get(): WrongMessage")
+			reply.Err = ErrNoKey
+			fmt.Println("Get(): ErrNoKey")
 			reply.Value = ""
 		}
-	case <-time.After(100 * time.Millisecond):
-		reply.Err = "Timeout"
-		fmt.Println("Get(): Timeout")
+	} else {
+		reply.Err = ErrWrongMessage
+		fmt.Println("Get(): WrongMessage")
 		reply.Value = ""
 	}
 	return
@@ -98,12 +118,28 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
+	var ok bool
+
 	key := args.Key
 	value := args.Value
 	op := args.Op
+	id := args.Id
+	seenId := args.SeenId
+
+	_, ok = kv.completedIds[seenId]
+	if ok {
+		delete(kv.completedIds, seenId)
+	}
+
+	_, ok = kv.completedIds[id]
+	if ok {
+		reply.Err = OK
+		fmt.Println("PutAppend(): OK")
+		return
+	}
 
 	// Start() will return immediately.
-	_, _, isLeader := kv.rf.Start(Op{Type: op, Key: key, Value: value})
+	_, _, isLeader := kv.rf.Start(Op{Type: op, Key: key, Value: value, Id: id, SeenId: seenId})
 
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -111,23 +147,22 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 
-	select  {
-	case rep := <- kv.applyCh:
-		if rep.CommandValid == true && rep.Command.(Op).Type == op && rep.Command.(Op).Key == key && rep.Command.(Op).Value == value {
-			if op == "Put" {
-				kv.data[key] = value
-			} else if op == "Append" {
-				kv.data[key] += value
-			}
-			reply.Err = OK
-			fmt.Println("PutAppend(): OK")
-		} else {
-			reply.Err = "WrongMessage"
-			fmt.Println("PutAppend(): WrongMessage")
+	rep := <- kv.applyCh
+
+	if rep.CommandValid == true && rep.Command.(Op).Type == op && rep.Command.(Op).Key == key && rep.Command.(Op).Value == value {
+		if op == "Put" {
+			kv.data[key] = value
+		} else if op == "Append" {
+			kv.data[key] += value
 		}
-	case <-time.After(100 * time.Millisecond):
-		reply.Err = "Timeout"
-		fmt.Println("PutAppend(): Timeout")
+		reply.Err = OK
+		fmt.Println("PutAppend(): OK")
+
+		// record the identifier of the last operation.
+		kv.completedIds[id] = value
+	} else {
+		reply.Err = ErrWrongMessage
+		fmt.Println("PutAppend(): WrongMessage")
 	}
 	return
 }
@@ -151,6 +186,57 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+//
+// Followers receive apply messages and update the data of kv server in the background.
+func (kv *KVServer) appliedToStateMachine() {
+	for !kv.killed() {
+		
+		_, isLeader := kv.rf.GetState()
+
+		// Skip the leader
+		if isLeader {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		kv.mu.Lock()
+		// For the followers
+		for m := range kv.applyCh {
+			if !m.CommandValid {
+				panic("m.CommandValid can't be false")
+			}
+
+			op := m.Command.(Op).Type
+			key := m.Command.(Op).Key
+			value := m.Command.(Op).Value
+			id := m.Command.(Op).Id
+			seenId := m.Command.(Op).SeenId
+
+			if op == "Put" {
+				kv.data[key] = value
+			} else if op == "Append" {
+				kv.data[key] += value
+			}
+
+			// record the identifier of the last operation.
+			kv.completedIds[id] = value
+
+			// If the seenId is in the completedIds, delete it.
+			_, ok := kv.completedIds[seenId]
+			if ok {
+				delete(kv.completedIds, seenId)
+			}
+
+			_, isLeader := kv.rf.GetState()
+			if isLeader {
+				break
+			}
+		}
+
+		kv.mu.Unlock()
+	}
 }
 
 //
@@ -183,6 +269,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.data = make(map[string]string)
+	kv.completedIds = make(map[int64]string)
 
 	return kv
 }

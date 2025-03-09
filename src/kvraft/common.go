@@ -4,6 +4,7 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrWrongMessage = "ErrWrongMessage"
 )
 
 type Err string
@@ -14,6 +15,12 @@ type PutAppendArgs struct {
 	Value string
 	Op    string // "Put" or "Append"
 	// You'll have to add definitions here.
+
+	// Uniquely identify client operations to ensure that the key/value service executes
+	Id		int64
+
+	SeenId 	int64
+
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
@@ -25,6 +32,11 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
+
+	// Uniquely identify client operations to ensure that the key/value service executes
+	Id	int64
+
+	SeenId 	int64
 }
 
 type GetReply struct {
