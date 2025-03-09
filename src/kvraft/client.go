@@ -3,6 +3,7 @@ package kvraft
 import "6.824/labrpc"
 import "crypto/rand"
 import "math/big"
+import "fmt"
 
 
 type Clerk struct {
@@ -37,8 +38,22 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
 	// You will have to modify this function.
+	args := GetArgs{Key: key}
+	for i := 0; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
+		// construct a new reply to avoid labgob warning.
+		reply := GetReply{}
+		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+		if !ok {
+			continue
+		}
+		if reply.Err == ErrNoKey {
+			return ""
+		} else if reply.Err == OK {
+			return reply.Value
+		}
+	}
+
 	return ""
 }
 
@@ -54,6 +69,17 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	args := PutAppendArgs{Key: key, Value: value, Op: op}
+	for i := 0; i < len(ck.servers); i = (i + 1) % len(ck.servers) {
+		// construct a new reply to avoid labgob warning.
+		reply := PutAppendReply{}
+		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+		if !ok || reply.Err != OK {
+			fmt.Printf("PutAppend failed: %v\n", reply.Err)
+			continue
+		}
+		return
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {

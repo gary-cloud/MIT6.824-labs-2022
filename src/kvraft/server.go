@@ -1,12 +1,15 @@
 package kvraft
 
 import (
-	"6.824/labgob"
-	"6.824/labrpc"
-	"6.824/raft"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
 )
 
 const Debug = false
@@ -23,6 +26,10 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+
+	Type 	string
+	Key 	string
+	Value 	string
 }
 
 type KVServer struct {
@@ -35,15 +42,94 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+
+	// key-value stored data.
+	data 	map[string]string
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	key :=  args.Key
+
+	// Start() will return immediately.
+	_, _, isLeader := kv.rf.Start(Op{Type: "Get", Key: key, Value: ""})
+
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		fmt.Println("Get(): ErrWrongLeader")
+		reply.Value = ""
+		return
+	}
+
+	select  {
+	case rep := <- kv.applyCh:
+		if rep.CommandValid == true && rep.Command.(Op).Type == "Get" && rep.Command.(Op).Key == key {
+			value, ok := kv.data[key]
+			if ok {
+				reply.Err = OK
+				fmt.Println("Get(): OK")
+				reply.Value = value
+			} else {
+				reply.Err = ErrNoKey
+				fmt.Println("Get(): ErrNoKey")
+				reply.Value = ""
+			}
+		} else {
+			reply.Err = "WrongMessage"
+			fmt.Println("Get(): WrongMessage")
+			reply.Value = ""
+		}
+	case <-time.After(100 * time.Millisecond):
+		reply.Err = "Timeout"
+		fmt.Println("Get(): Timeout")
+		reply.Value = ""
+	}
+	return
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	key := args.Key
+	value := args.Value
+	op := args.Op
+
+	// Start() will return immediately.
+	_, _, isLeader := kv.rf.Start(Op{Type: op, Key: key, Value: value})
+
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		fmt.Println("PutAppend(): ErrWrongLeader")
+		return
+	}
+
+	select  {
+	case rep := <- kv.applyCh:
+		if rep.CommandValid == true && rep.Command.(Op).Type == op && rep.Command.(Op).Key == key && rep.Command.(Op).Value == value {
+			if op == "Put" {
+				kv.data[key] = value
+			} else if op == "Append" {
+				kv.data[key] += value
+			}
+			reply.Err = OK
+			fmt.Println("PutAppend(): OK")
+		} else {
+			reply.Err = "WrongMessage"
+			fmt.Println("PutAppend(): WrongMessage")
+		}
+	case <-time.After(100 * time.Millisecond):
+		reply.Err = "Timeout"
+		fmt.Println("PutAppend(): Timeout")
+	}
+	return
 }
 
 //
@@ -96,6 +182,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.data = make(map[string]string)
 
 	return kv
 }
